@@ -1,104 +1,91 @@
-# slurm_tutorial
+# Slurm examples for Hopper
 
-## Github Desktop
-To download Github Desktop: https://desktop.github.com/
+Worked job scripts for [Hopper](https://portal.cac.cornell.edu/techdocs/clusters/Hopper/), the cluster shared by the Srikrishnan, Reed, Steinschneider, and Anderson groups.
 
-Login with your credentials and allocate the slurm_tutorial repository. Make a copy to your local machine. (You might not want to set the github folder under a cloud folder.)
+Each example is a Slurm script plus the small program it runs, in both Julia and Python, ordered from the simplest thing that works to the patterns this group actually uses day to day.
 
-## Hopper
-Homepage: https://www.cac.cornell.edu/wiki/index.php?title=Hopper_Cluster
-You will be able to find all the basic information about Hopper from the homepage. Some of the following information is taken from the homepage.
+For getting an account, connecting, remote editing, and cluster etiquette, see **[Using Hopper](https://viveks.bee.cornell.edu/lab-manual/guides/hopper-access.html)** in the lab manual. This repository is only about running things.
 
-We are sharing this cluster with several groups, so there is a google doc to help us communicate with each and planning our job submission accordingly:
-https://docs.google.com/spreadsheets/d/1eZZJYHK_LbwlbSAHN-icJT7H-2FuSoEnRMCIcPNX2GA/edit#gid=0
+## What's here
 
-### Login node
-- There is 1 login nodes and 22 computing nodes on the cluster. The login node is used for submitting jobs or requesting interactive sessions (You should never run computationally heavy job on the login node)
-- Use `ssh` to login `ssh yournetid@hopper.cac.cornell.edu`
+| | Julia | Python | Use it when |
+|---|---|---|---|
+| **1. Single node, one core** | [`julia/jobs/01_single_node.sh`](julia/jobs/01_single_node.sh) | [`python/jobs/01_single_node.sh`](python/jobs/01_single_node.sh) | Checking your environment; anything serial |
+| **2. One node, many cores** | [`02_threads.sh`](julia/jobs/02_threads.sh) | [`02_multiprocessing.sh`](python/jobs/02_multiprocessing.sh) | Work that fits on one node |
+| **3. Many nodes** | [`03_distributed.sh`](julia/jobs/03_distributed.sh) | [`03_mpi.sh`](python/jobs/03_mpi.sh) | Work that genuinely will not fit on one node |
+| **4. Job array** | [`04_array.sh`](julia/jobs/04_array.sh) | [`04_array.sh`](python/jobs/04_array.sh) | Independent members: ensembles, sweeps, replicates |
+| **5. Chained stages** | [`pipeline/`](pipeline/) | same | Multi-stage workflows with dependencies |
 
-### Computing nodes
-- There are 22 compute nodes (c0001-c0022) with dual 20-core Intel Xeon Gold 5218R CPUs @ 2.1 GHz, 192 GB of RAM
-- You can submit job to the compute nodes using `sbatch` or requrest an interactive node using `salloc`. These are command of the `slurm`, which is a cluster management and job scheduling system for large and small Linux clusters. 
-- Some resources for slurm:
-  - [Slurm introduction by Princeton Research
-    Computing](https://researchcomputing.princeton.edu/slurm)
-  - [Slurm overview](https://slurm.schedmd.com/overview.html)
-  - [Slurm commands reference
-    sheet](https://slurm.schedmd.com/pdfs/summary.pdf)
+Run everything from the repository root, so the relative paths in the scripts resolve:
 
-
-## Slurm submission options
-
-### Though `Sbatch` headers at the begining of the shell script. Below is a template.
 ```bash
-#!/bin/bash
-#SBATCH --nodes=1                (number of nodes, i.e., machines; all non-MPI jobs *must* run on a single node, i.e., '--nodes=1' must be given here)
-#SBATCH --ntasks=8               (number of tasks; by default, 1 task=1 slot=1 thread)
-#SBATCH --mem=8000               (request 8 GB of memory for this job)
-#SBATCH --time=1-20:00:00        (wall-time limit for job; here: 1 day and 20 hours)
-#SBATCH --job-name=jobname             (change name of job)
-#SBATCH --output=jobname.out.%j  (write stdout+stderr to this file; %j willbe replaced by job ID)
-#SBATCH --mail-user=email@address.com          (set your email address)
-#SBATCH --mail-type=ALL          (send email at job start, end or crash - do not use if this is going to generate thousands of e-mails!)
-```
-When the script is ready, you can save it as `submit.sh`, for example,
-and submit it with `sbatch submit.sh`.
-
-Note that this option is only applicable for `sbatch`, but not `salloc`.
-
-A sample file to submit a matlab script and a python script are included in this repo: `matlab_slurm.sl`,`python_slurm.sh`.
-
-### By appending the options after `sbatch` or `salloc` on command line
-
-For example,
-
-``` bash
-sbatch --job-name=somename --nodes=1 --ntasks=6 --mem=4000 submit.sh
+mkdir -p logs
+sbatch python/jobs/01_single_node.sh
+squeue -u $USER
 ```
 
-or
+`logs/` must exist before you submit. Slurm will not create it, and the job fails immediately if it is missing.
 
-``` bash
-salloc --nodes=1 --ntasks=6 --mem=4000
+## Which pattern do I want?
+
+**Start with the job array.** Most of what this group runs is an ensemble of independent tasks — Monte Carlo replicates, parameter sweeps, one run per scenario. An array is the right tool, and it beats the alternatives on every axis that matters: Slurm schedules tasks into gaps as they open, a failed member can be resubmitted alone, and you are not holding a large allocation while most of it idles.
+
+Reach for **threads or multiprocessing** when one task needs several cores, and for **MPI or Julia's `Distributed`** only when the work genuinely does not fit on a node. Multi-node parallelism is harder to debug and waits longer in the queue; do not pay that cost until you have to.
+
+If you are unsure whether your problem parallelises at all, that is worth asking about before you queue anything. Most MCMC does not. Approximate Bayesian Computation, pre-calibration, and particle filtering do.
+
+## Hopper specifics
+
+**Partitions.** `normal` has no time limit; `guest` is capped at 48 hours. Set `-t` to something realistic anyway — a hung job with no limit holds resources the rest of the cluster wants.
+
+**Hyperthreading is on.** Slurm counts each physical core as two CPUs, so `-c 16` is 8 physical cores. Add `--ntasks-per-core=1` if you would rather count physical cores.
+
+**Throttle your arrays.** `--array=1-500%50` runs at most 50 tasks at once. Four groups share this cluster; an unthrottled 500-task array will fill it. If you need a large fraction of Hopper for a while, tell the other groups first.
+
+**`$HOME` is NFS, and it is not backed up.** Jobs doing heavy file I/O should stage through node-local `/tmp` and copy results back at the end — CAC is emphatic about this, and it matters most for arrays, where the multiplier is the number of concurrent tasks. Nothing on Hopper is backed up by anyone, so anything you cannot cheaply regenerate belongs somewhere else too.
+
+**Never compute on the head node.** CAC's stated consequence is that your privileges are revoked. For interactive work:
+
+```bash
+srun -p normal -n 1 -c 8 --pty /bin/bash -l
 ```
 
-This option works for both `sbatch` and `salloc`. Also, note that the
-command line options will override the `#SBATCH` headers, so it might be
-a good practice to use the headers as default settings and tweak them
-with command line when needed.
+## Setting up
 
-### Job monitoring and cancel a job
-- Use `squeue` to monitor job status
-- USe `scancel jobid` to cancel your job
+**Python.** Hopper has no `python3` module and ships a system Python 3.6, so build a virtual environment:
 
-### Job Arrays
-If you want to run an identical programs for multiple times, instead of using a for-loop (which requires some shell language), you can submit the script as a job array by adding the following header to the job submission script:
-```
-#SBATCH --output=pythontest.%A_%a.out
-#SBATCH --array=1-3
+```bash
+python3 -m venv ~/envs/tutorial
+source ~/envs/tutorial/bin/activate
+pip install --upgrade pip
+pip install -r python/requirements.txt
 ```
 
-## Using Github with cluster
-### Setup personal access Tokens with GIT and Github
-To generate a token
-- Log into GitHub
-- Click on your name / Avatar in the upper right corner and select Settings'
-- On the left, click Developer settings
-- Select Personal access tokens and click Generate new token
-- Give the token a description/name and select the scope of the token
-- Click Generate token
-- Copy the token – this is your new password! (Save this to a safe place as it will only appear once on the website)
+`mpi4py` is only needed for example 3 and must be built against the cluster's MPI — `module load gnu9 openmpi4` before installing it.
 
-### Confiugre Git on Hopper
-```
-git config --global user.name ""
-git config --global user.email ""
-git config -l
-git clone "a private repo from our organization and it will ask for your username and the token we just generated)
-git config --global credential.helper cache
+**Julia.** A `julia` module exists but may lag; installing [`juliaup`](https://github.com/JuliaLang/juliaup) in your home directory gives you control of the version, which is what you want for a project with a committed `Manifest.toml`.
+
+```bash
+julia --project=julia -e 'using Pkg; Pkg.instantiate()'
 ```
 
-## Reference
-- [BSCB Cluster Tutorial](https://github.com/therkildsen-lab/user-guide/blob/master/slurm_tutorial/slurm.md)
-- [Job scheduling on HPC resources](https://waterprogramming.wordpress.com/2018/06/25/job-scheduling-on-hpc-resources/)
-- [Using Personal Access Tokens with GIT and GitHub](https://www.edgoad.com/2021/02/using-personal-access-tokens-with-git-and-github.html)
+Every array task pays Julia's precompilation cost separately. For large arrays, consider a sysimage built with `PackageCompiler.jl`.
+
+## Monitoring
+
+```bash
+squeue -u $USER                 # what is queued and running
+scontrol show job <job_id>      # why is it pending
+scancel <job_id>                # cancel; add _<task> for one array task
+sacct -j <job_id>               # what a finished job used, if configured
+```
+
+`sacct` and `seff` are standard Slurm but are not in CAC's documentation for Hopper, so they may or may not be available here.
+
+A job stuck in `PENDING` with reason `Resources` just means the cluster is busy. `DependencyNeverSatisfied` in a chained workflow means an earlier stage failed — read its log and cancel the rest.
+
+## More
+
+- [CAC TechDocs: Hopper](https://portal.cac.cornell.edu/techdocs/clusters/Hopper/) and [Slurm](https://portal.cac.cornell.edu/techdocs/clusterinfo/slurm/)
+- [Slurm command summary](https://slurm.schedmd.com/pdfs/summary.pdf) (SchedMD)
+- [Job scheduling on HPC resources](https://waterprogramming.wordpress.com/2018/06/25/job-scheduling-on-hpc-resources/) and [more HPC posts](https://waterprogramming.wordpress.com/category/high-performance-computing/), Water Programming

@@ -1,0 +1,3 @@
+numpy
+# mpi4py is only needed for 03_mpi.py, and must be built against the
+# cluster's MPI: module load gnu9 openmpi4 before pip install mpi4py
